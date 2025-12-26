@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>작업장 안전 모니터링 시스템</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+
+<body>
+    <div class="container">
+        <!-- 헤더 -->
+        <header class="header">
+            <h1>작업장 안전 모니터링 시스템</h1>
+            <div class="user-info" id="userInfo">
+                <span id="userName" class="user-name"></span>
+                <span id="userRole" class="user-role"></span>
+                <button id="logoutBtn" class="logout-btn">로그아웃</button>
+            </div>
+        </header>
+
+        <!-- 챗 영역 -->
+        <main class="chat-container">
+            <div class="chat-messages" id="chatMessages">
+                <div class="message assistant">
+                    <div class="message-content">
+                        <p>안녕하세요! 작업장 안전 모니터링 시스템입니다. 무엇을 도와드릴까요?</p>
+                        <p class="message-hint">예: "CAM-001의 이벤트를 보여줘" 또는 "오늘 안전사고 통계 알려줘"</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="chat-input-container">
+                <!-- 이미지 업로드 영역 -->
+                <div class="image-upload-area" id="imageUploadArea">
+                    <input type="file" id="imageInput" accept="image/*" multiple style="display: none;">
+                    <div class="upload-dropzone" id="uploadDropzone">
+                        <p>📎 이미지를 드래그하거나 클릭하여 업로드</p>
+                        <p class="upload-hint">(JPG, PNG, WEBP, GIF - 최대 10MB)</p>
+                    </div>
+                    <div class="image-preview-container" id="imagePreviewContainer"></div>
+                </div>
+
+                <!-- 텍스트 입력 폼 -->
+                <form id="chatForm">
+                    <input type="text" id="userInput" placeholder="질문을 입력하세요..." autocomplete="off" required>
+                    <button type="submit" id="sendBtn">
+                        <span>전송</span>
+                    </button>
+                </form>
+            </div>
+        </main>
+    </div>
+
+    <script src="/static/auth.js"></script>
+    <script src="/static/script.js"></script>
+</body>
+
+</html>

@@ -1,0 +1,38 @@
+# LLM 및 LangChain 핵심
+langchain==0.1.0
+langchain-google-genai==0.0.6
+langchain-community==0.0.13
+google-generativeai==0.3.2
+
+# RAG 및 벡터 저장소
+chromadb==0.4.22
+sentence-transformers==2.2.2
+
+# 백엔드
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+pydantic==2.5.3
+pydantic-settings==2.1.0
+
+# 인증 및 보안
+python-jose[cryptography]==3.3.0
+bcrypt==4.0.1
+sqlalchemy==2.0.25
+
+# 유틸리티
+python-dotenv==1.0.0
+python-multipart==0.0.6
+requests==2.31.0
+
+# 웹 검색
+duckduckgo-search==4.1.1  # 선택적 의존성
+
+# 데이터 처리
+pandas==2.1.4
+numpy==1.26.3
+
+# 이미지 처리
+Pillow==10.2.0
+
+# 날짜/시간
+python-dateutil==2.8.2
