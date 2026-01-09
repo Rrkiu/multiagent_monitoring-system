@@ -53,6 +53,9 @@ uploaded_images/
 data/knowledge_base/*.pdf
 data/knowledge_base/*.docx
 
+# Documentation (local only)
+documents/
+
 # Logs
 *.log
 logs/
@@ -87,3 +90,6 @@ tmp/
 # Node modules (if frontend uses npm)
 node_modules/
 package-lock.json
+
+# extra
+list_models.py
