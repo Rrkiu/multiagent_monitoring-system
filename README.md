@@ -165,15 +165,6 @@ python test_search_agent.py
 python test_security.py
 ```
 
-## 문서
-
-자세한 문서는 `documents/` 디렉토리를 참조하세요:
-
-- [인증 가이드](documents/AUTH_README.md)
-- [멀티모달 에이전트 구현](documents/MULTIMODAL_AGENT_IMPLEMENTATION.md)
-- [검색 에이전트 가이드](documents/SEARCH_AGENT_GUIDE.md)
-- [프론트엔드 인증 가이드](documents/FRONTEND_AUTH_GUIDE.md)
-
 ## 라이선스
 
 이 프로젝트는 MIT 라이선스 하에 배포됩니다.
