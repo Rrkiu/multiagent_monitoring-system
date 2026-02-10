@@ -1,0 +1,52 @@
+# Vision Analysis Skill Configuration
+
+# Vision 모델 설정
+vision_model: "gemini-2.0-flash-exp"
+
+# 이미지 처리 설정
+max_image_size: 1024  # 최대 이미지 크기 (픽셀)
+supported_formats:
+  - jpg
+  - jpeg
+  - png
+  - webp
+
+# PPE 감지 설정
+ppe_types:
+  - helmet          # 안전모
+  - safety_vest     # 안전 조끼
+  - safety_shoes    # 안전화
+  - gloves          # 보호 장갑
+
+# 신뢰도 임계값
+confidence_threshold: 0.7
+
+# 위험도 계산 설정
+risk_levels:
+  low:
+    max_violations: 0
+    severity_threshold: 0
+  medium:
+    max_violations: 2
+    severity_threshold: 1
+  high:
+    max_violations: 999
+    severity_threshold: 2
+
+# 분석 옵션
+analysis_options:
+  include_location: true      # 위반 위치 포함
+  include_confidence: true    # 신뢰도 포함
+  include_recommendations: true  # 권고사항 포함
+  detailed_analysis: true     # 상세 분석
+
+# 성능 설정
+batch_size: 5  # 다중 이미지 분석 시 배치 크기
+timeout: 30    # 분석 타임아웃 (초)
+
+# 로깅 설정
+logging:
+  enabled: true
+  level: INFO
+  save_results: true
+  results_dir: "data/vision_analysis_results"
