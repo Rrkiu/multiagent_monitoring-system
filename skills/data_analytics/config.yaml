@@ -1,0 +1,51 @@
+# Data Analytics Skill Configuration
+
+# LLM 설정
+llm_model: "gemini-2.0-flash-exp"
+temperature: 0.0  # 데이터 분석은 정확성이 중요
+
+# 분석 기간 설정
+default_analysis_days: 7
+max_analysis_days: 90
+
+# 위험도 점수 설정
+severity_scores:
+  LOW: 1
+  MEDIUM: 3
+  HIGH: 7
+  CRITICAL: 10
+
+# 위험 수준 임계값
+risk_thresholds:
+  critical_avg_score: 7
+  high_avg_score: 5
+  medium_avg_score: 3
+  unresolved_ratio: 0.5
+
+# 상위 카메라 설정
+default_top_cameras_limit: 3
+max_top_cameras_limit: 10
+
+# 통계 옵션
+statistics_options:
+  include_resolution_rate: true
+  include_event_types: true
+  include_severity_breakdown: true
+  include_camera_breakdown: true
+
+# 추세 분석 옵션
+trend_options:
+  include_type_changes: true
+  include_severity_changes: true
+  calculate_percentage: true
+
+# 성능 설정
+cache_enabled: false
+cache_ttl: 300  # 5분
+
+# 로깅 설정
+logging:
+  enabled: true
+  level: INFO
+  save_results: true
+  results_dir: "data/analytics_results"

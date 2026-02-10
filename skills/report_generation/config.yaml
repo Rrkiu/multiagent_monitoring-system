@@ -1,0 +1,89 @@
+# Report Generation Skill Configuration
+
+# LLM 설정
+llm_model: "gemini-2.0-flash-exp"
+temperature: 0.3  # 보고서는 일관성 있게
+
+# 보고서 형식 설정
+report_formats:
+  event_report:
+    include_summary: true
+    include_details: true
+    include_recommendations: true
+  
+  statistics_report:
+    include_charts: false  # 텍스트 기반
+    include_trends: true
+    include_comparisons: true
+  
+  action_plan:
+    include_immediate_actions: true
+    include_longterm_actions: true
+    include_responsible_parties: true
+  
+  incident_report:
+    include_root_cause: true
+    include_timeline: true
+    include_prevention_measures: true
+
+# 보고서 길이 설정
+report_length:
+  summary: 200  # 요약 최대 길이
+  event_report: 1000
+  statistics_report: 1500
+  action_plan: 800
+  incident_report: 2000
+  daily_report: 2000
+  weekly_report: 3000
+
+# 우선순위 설정
+priority_levels:
+  CRITICAL: 1
+  HIGH: 2
+  MEDIUM: 3
+  LOW: 4
+
+# 보고서 섹션 설정
+report_sections:
+  daily:
+    - summary
+    - key_events
+    - statistics
+    - action_items
+  
+  weekly:
+    - executive_summary
+    - event_analysis
+    - statistical_trends
+    - risk_assessment
+    - recommendations
+  
+  incident:
+    - incident_overview
+    - sequence_of_events
+    - root_cause_analysis
+    - impact_assessment
+    - prevention_measures
+    - recommendations
+
+# 출력 형식
+output_format:
+  default: "markdown"
+  supported: ["markdown", "text", "html"]
+
+# 언어 설정
+language: "ko"
+date_format: "%Y-%m-%d"
+time_format: "%H:%M:%S"
+
+# 로깅 설정
+logging:
+  enabled: true
+  level: INFO
+  save_reports: true
+  reports_dir: "data/reports"
+
+# 성능 설정
+performance:
+  max_concurrent_reports: 3
+  timeout_seconds: 60
