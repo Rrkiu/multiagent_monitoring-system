@@ -6,6 +6,10 @@ RAG (Retrieval-Augmented Generation) 시스템
 from pathlib import Path
 from typing import List, Optional
 import logging
+import os
+
+# ChromaDB 텔레메트리 비활성화 (에러 메시지 제거)
+os.environ['ANONYMIZED_TELEMETRY'] = 'False'
 
 from langchain_community.document_loaders import DirectoryLoader, TextLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter

@@ -13,7 +13,7 @@ import uvicorn
 from pathlib import Path
 from typing import List
 
-from agents.supervisor_agent import SupervisorAgent
+from agents.supervisor_v2 import SupervisorAgentV2  # Skills 기반
 from agents.security_agent import SecurityAgent
 from config import settings
 
@@ -49,13 +49,13 @@ supervisor = None
 security_agent = None
 
 
-def get_supervisor() -> SupervisorAgent:
-    """Supervisor Agent 싱글톤 반환"""
+def get_supervisor() -> SupervisorAgentV2:
+    """Supervisor Agent V2 싱글톤 반환"""
     global supervisor
     if supervisor is None:
-        print("Supervisor Agent 초기화 중...")
-        supervisor = SupervisorAgent()
-        print("Supervisor Agent 초기화 완료!")
+        print("Supervisor Agent V2 초기화 중...")
+        supervisor = SupervisorAgentV2()
+        print("Supervisor Agent V2 초기화 완료!")
     return supervisor
 
 
@@ -214,7 +214,7 @@ async def process_multimodal_query(
         # Supervisor Agent 가져오기
         agent = get_supervisor()
         
-        # 이미지가 있는 경우 MultimodalAgent로 직접 라우팅
+        # 이미지가 있는 경우 image_data와 함께 실행
         if request.images and len(request.images) > 0:
             print(f"\n[멀티모달 쿼리] 이미지 개수: {len(request.images)}")
             
@@ -223,12 +223,8 @@ async def process_multimodal_query(
                 "images": request.images
             }
             
-            # MultimodalAgent 직접 실행
-            response = agent._execute_single_agent(
-                "multimodal", 
-                request.query,
-                image_data=image_data
-            )
+            # SupervisorAgentV2에 이미지 데이터 전달
+            response = agent.execute(request.query, image_data=image_data)
         else:
             # 이미지가 없으면 일반 쿼리로 처리
             response = agent.execute(request.query)
