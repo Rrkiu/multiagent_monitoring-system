@@ -1,0 +1,56 @@
+# Knowledge Management Skill Configuration
+
+# LLM 설정
+llm_model: "gemini-2.0-flash-exp"
+temperature: 0.3  # 지식 기반 답변은 약간의 창의성 허용
+
+# RAG 시스템 설정
+knowledge_base_dir: "data/knowledge_base"
+persist_dir: "data/vector_store"
+embedding_model: "sentence-transformers/all-MiniLM-L6-v2"
+
+# 문서 분할 설정
+chunk_size: 500
+chunk_overlap: 50
+
+# 검색 설정
+default_search_k: 3  # 기본 검색 결과 수
+max_search_k: 10     # 최대 검색 결과 수
+
+# 답변 생성 설정
+answer_generation:
+  use_context: true
+  max_context_docs: 3
+  include_sources: true
+
+# 이벤트 타입 매핑
+event_types:
+  - NO_HELMET          # 안전모 미착용
+  - NO_SAFETY_VEST     # 안전조끼 미착용
+  - FALL_DETECTED      # 낙상 감지
+  - RESTRICTED_AREA    # 제한구역 침입
+  - EQUIPMENT_MISUSE   # 장비 오용
+  - FIRE_HAZARD        # 화재 위험
+
+# 캐싱 설정
+cache:
+  enabled: true
+  ttl: 3600  # 1시간
+  max_size: 100
+
+# 로깅 설정
+logging:
+  enabled: true
+  level: INFO
+  log_searches: true
+  log_file: "data/logs/knowledge_management.log"
+
+# 벡터 스토어 설정
+vectorstore:
+  collection_name: "safety_knowledge"
+  distance_metric: "cosine"
+  
+# 성능 설정
+performance:
+  batch_size: 32
+  max_workers: 4
