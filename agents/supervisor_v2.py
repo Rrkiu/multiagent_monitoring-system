@@ -6,6 +6,7 @@ Skills 기반 아키텍처를 사용하는 개선된 Supervisor Agent
 from langchain_google_genai import ChatGoogleGenerativeAI
 from config import settings
 from skills.skill_manager import SkillManager
+from utils.response_formatter import get_formatter
 import json
 import re
 from typing import Optional, Dict, Any
@@ -26,6 +27,9 @@ class SupervisorAgentV2:
 
         # Skill Manager 초기화
         self.skill_manager = SkillManager()
+        
+        # Response Formatter 초기화
+        self.formatter = get_formatter()
         
         # 사용 가능한 Skills 목록
         self.available_skills = self.skill_manager.list_skills()
@@ -332,12 +336,15 @@ class SupervisorAgentV2:
                 context=context
             )
             
-            # 결과 포맷팅
-            if isinstance(result, dict):
-                # dict 결과를 문자열로 변환
-                return self._format_result(result, skill_name, task)
-            else:
-                return str(result)
+            # ResponseFormatter로 사용자 친화적 응답 생성
+            formatted_response = self.formatter.format_response(
+                raw_result=result,
+                user_query=original_input,
+                skill_name=skill_name,
+                task=task
+            )
+            
+            return formatted_response
 
         except Exception as e:
             import traceback
