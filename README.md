@@ -212,18 +212,6 @@ if result['success']:
     print(f"결과: {result['result']}")
 ```
 
-## 📚 Skills 문서
-
-Skills 아키텍처에 대한 상세 문서는 `documents/` 디렉토리를 참조하세요:
-
-1. **[SKILLS_IMPLEMENTATION_GUIDE.md](documents/SKILLS_IMPLEMENTATION_GUIDE.md)** - 빠른 시작 가이드
-2. **[SKILLS_ARCHITECTURE_PLAN.md](documents/SKILLS_ARCHITECTURE_PLAN.md)** - 전체 아키텍처 설계
-3. **[SKILLS_EVENT_MAPPING.md](documents/SKILLS_EVENT_MAPPING.md)** - 이벤트 처리 매핑
-4. **[SKILLS_COMPLETION_REPORT.md](documents/SKILLS_COMPLETION_REPORT.md)** - 완료 보고서
-5. **[SUPERVISOR_ROLE_COMPARISON.md](documents/SUPERVISOR_ROLE_COMPARISON.md)** - Supervisor 역할 비교
-6. **[SKILLS_AUTONOMY_EXPLANATION.md](documents/SKILLS_AUTONOMY_EXPLANATION.md)** - 자율성 설명
-
-
 ### 1. 사용자 등록
 
 ```bash
