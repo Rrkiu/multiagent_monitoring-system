@@ -1,238 +1,127 @@
-# Safety Monitoring Multi-Agent System (Skills Branch)
+# Safety Monitoring Multi-Agent System (LangGraph + Skills Architecture)
 
-> 🚀 **Skills 기반 아키텍처 브랜치**  
-> 이 브랜치는 기존 Agent + Tools 구조를 **Skills 기반 아키텍처**로 재구성한 버전입니다.
+> 🚀 **LangGraph 기반 차세대 아키텍처**  
+> 이 프로젝트는 기존의 단순 Agent + Tools 구조를 넘어, **LangGraph 기반의 Supervisor 제어 타워**와 **독립적인 플러그인 형태의 Skills**로 고도화된 버전입니다.
 
-안전 모니터링을 위한 멀티 에이전트 시스템입니다. Google Gemini API를 활용하여 다양한 안전 관련 작업을 수행합니다.
+작업장 안전 모니터링을 위한 지능형 멀티 에이전트 시스템입니다. Google Gemini API를 활용하여, 사용자의 질의를 분석하고 적절한 안전 점검, 데이터 분석, 지식 검색, 보고서 생성 작업을 자동화하여 수행합니다.
 
-## 📌 브랜치 정보
+---
 
-| 브랜치 | 설명 | 상태 |
-|--------|------|------|
-| `main` | 기존 Agent + Tools 구조 | ✅ 안정 버전 |
-| `skills` | Skills 기반 아키텍처 | 🚧 개발 중 (프로토타입 완성) |
+## 🎯 주요 아키텍처 특징
 
-### Skills 브랜치 특징
+### 1. LangGraph 기반 Supervisor (M1/M2)
+- **제어 역전(IoC)**: LLM이 스스로 판단하던 불확실한 제어 흐름을 LangGraph의 명시적 StateGraph 상태 머신으로 대체.
+- **영속적 대화 메모리 (M2)**: `SqliteSaver`를 통해 사용자 세션별 대화 이력을 데이터베이스에 영속적으로 저장.
+- **에러 복구 파이프라인 (M2)**: 스킬 실행 실패 시 Router로 피드백 루프를 형성하여 최대 3회까지 자동 재라우팅/재시도.
+- **병렬 분기 처리 (M2)**: LangGraph `Send` API를 통해 멀티스텝 작업 요청 시 독립된 여러 스킬을 동시에 병렬 실행 후 결과를 합성.
 
-- ✅ **응집도 향상**: Agent + Tools가 Skill로 통합
-- ✅ **재사용성 증가**: 독립적인 Skill 모듈
-- ✅ **확장성 개선**: 새 Skill 추가 시 코드 수정 불필요
-- ✅ **문서화 강화**: 각 Skill별 상세 문서
+### 2. Skills 플러그인 시스템
+모든 기능이 독립적인 Skill 모듈로 분리되어 응집도가 높고 확장이 용이합니다.
+- 🔍 **Vision Analysis Skill**: 이미지 기반 안전 위반(PPE 미착용, 낙상, 화재 등) 감지
+- 📊 **Data Analytics Skill**: 이벤트 데이터 조회, 통계, 추세 및 위험도 분석
+- 🧠 **Knowledge Management Skill**: RAG(ChromaDB) 기반 산업안전보건법 및 대응 가이드 검색
+- 📝 **Report Generation Skill**: 복합적인 분석 결과를 바탕으로 안전 조치 보고서 자동 생성
 
-## 🎯 주요 기능
+### 3. 안전 우선 라우팅 및 보안 
+- **3중 도메인 필터**: 안전과 무관한 질의(예: "오늘 날씨 어때?")를 LLM 호출 전에 선제적으로 차단 (`_is_safety_domain`).
+- **Security Node**: 시스템 프롬프트 변조 및 악의적인 인젝션 시도를 그래프의 최우선 진입점에서 검열 및 차단.
 
-### Skills 기반 시스템 (이 브랜치)
-
-- 🔍 **Vision Analysis Skill**: 이미지 기반 안전 분석 및 PPE 감지
-- 📊 **Data Analytics Skill**: 이벤트 데이터 분석 및 통계 (계획됨)
-- 🌐 **Web Intelligence Skill**: 웹 검색 및 정보 수집 (계획됨)
-- 🧠 **Knowledge Management Skill**: RAG 기반 지식 관리 (계획됨)
-- 🔒 **Security Validation Skill**: 보안 검증 및 모니터링 (계획됨)
-- 📝 **Report Generation Skill**: 분석 결과 리포트 생성 (계획됨)
-
-### 기존 기능 (main 브랜치)
-
-- 🤖 **멀티 에이전트 시스템**: 여러 전문화된 에이전트가 협력하여 작업 수행
-- 🔍 **검색 에이전트**: 웹 검색 및 정보 수집
-- 🖼️ **멀티모달 에이전트**: 이미지 분석 및 비전 작업
-- 📊 **분석 에이전트**: 데이터 분석 및 리포트 생성
-- 🔐 **보안 에이전트**: 보안 관련 검증 및 모니터링
-- 👤 **JWT 인증**: 안전한 사용자 인증 및 권한 관리
+---
 
 ## 🛠️ 기술 스택
 
-- **Backend**: FastAPI, Python 3.10+
-- **AI/ML**: Google Gemini API, LangChain
-- **Database**: SQLite, ChromaDB (Vector Store)
-- **Frontend**: HTML, CSS, JavaScript
+- **Backend**: Python 3.10+, FastAPI
+- **Workflow / AI**: LangGraph, LangChain, Google Gemini-3-27b-it
+- **Database / Vector Store**: SQLite3, ChromaDB, Sentence-Transformers (MiniLM)
+- **Frontend**: Vanilla HTML / JS / CSS
 - **Authentication**: JWT (JSON Web Tokens)
-- **Architecture**: Skills-based Multi-Agent System (이 브랜치)
+- **Testing**: Pytest, Pytest-Asyncio
 
-## 설치 방법
+---
 
-### 1. 저장소 클론
+## 📦 폴더 구조
 
-```bash
-git clone <repository-url>
-cd safety_multiagent
+```text
+safety_multiagent/
+├── agents/                 # LangGraph 정의 및 라우팅 로직
+│   ├── supervisor_langgraph.py  # 메인 제어 타워 (StateGraph)
+│   ├── security_agent.py   # 인젝션 방어
+│   └── state.py            # AgentState 타입 정의
+├── skills/                 # 핵심 기능 플러그인 (Skills)
+│   ├── base_skill.py       # 추상 클래스
+│   ├── skill_manager.py    # 동적 로딩 및 통합 실행 관리자
+│   ├── data_analytics/
+│   ├── knowledge_management/
+│   ├── report_generation/
+│   └── vision_analysis/
+├── auth/                   # JWT 인증 시스템 (경량)
+├── config/                 # Pydantic 설정 관리
+├── data/                   # 로컬 데이터 볼륨
+│   ├── agent_memory.db     # LangGraph 체크포인트 영속성 저장소
+│   ├── knowledge_base/     # RAG 마크다운 지식 문서들
+│   └── vector_store/       # ChromaDB 로컬 파일
+├── utils/                  # 세션 관리 (TTL) 및 RAG/포매팅 유틸 
+├── tests/                  # Pytest 통합 테스트 스위트
+│   ├── test_a_complex_scenarios.py # 복합 시나리오 검증
+│   ├── test_b_api_endpoints.py     # API 레벨 검증
+│   ├── test_c_graph_internals.py   # LangGraph 노드 및 라우팅 검증 
+│   └── test_d_multi_turn.py        # 세션 격리 및 메모리 검증
+├── documents/              # 아키텍처 마일스톤 및 구조 설계 문서 (M1/M2)
+└── app.py                  # FastAPI 엔트리 포인트
 ```
 
-### 2. 가상 환경 생성 및 활성화
+---
+
+## 🚀 설치 및 실행 방법
+
+### 1. 환경 설정 및 의존성 설치
 
 ```bash
+# 가상환경 생성 및 진입
 python -m venv venv
 source venv/bin/activate  # Linux/Mac
-# 또는
-venv\Scripts\activate  # Windows
-```
+# venv\Scripts\activate   # Windows
 
-### 3. 의존성 설치
-
-```bash
+# 의존성 설치
 pip install -r requirements.txt
 ```
 
-### 4. 환경 변수 설정
+### 2. 환경 변수 설정
+최상위 경로에 `.env` 파일을 생성하고 다음 값을 입력합니다.
 
-`.env.example` 파일을 `.env`로 복사하고 필요한 값을 설정합니다:
+```env
+GOOGLE_API_KEY=your_gemini_api_key_here
+SECRET_KEY=your_jwt_secret_key_here (32자 이상의 임의 문자열)
+```
+
+### 3. 애플리케이션 실행
 
 ```bash
-cp .env.example .env
+python -m uvicorn app:app --host 0.0.0.0 --port 8000
 ```
+- **웹 UI**: [http://localhost:8000](http://localhost:8000) 접속 후 기본 계정(`admin` / `admin123`)으로 로그인.
+- **API Docs**: [http://localhost:8000/docs](http://localhost:8000/docs)
 
-`.env` 파일을 열어 다음 값들을 설정하세요:
+---
 
-- `GOOGLE_API_KEY`: Google Gemini API 키
-- `SECRET_KEY`: JWT 토큰 생성을 위한 비밀 키 (32자 이상 권장)
+## 🧪 테스트 실행
 
-### 5. 데이터 디렉토리 생성
+마일스톤 4(M4)에서 완성된 방대한 단위/통합 테스트 스위트를 실행하려면 루트에서 다음 명령어를 실행합니다.
 
 ```bash
-mkdir -p data/vector_store data/knowledge_base data/uploaded_images
+# 전체 테스트 실행
+pytest
+
+# 특정 카테고리 테스트 실행
+pytest tests/test_c_graph_internals.py -v
 ```
 
-## 실행 방법
+---
 
-### 개발 서버 실행
+## 📡 주요 API 엔트리포인트
 
-```bash
-uvicorn app:app --reload --host 0.0.0.0 --port 8000
-```
+- `POST /api/query`: 텍스트 기반 안전 질의 요청. JSON으로 `{ "query": "..." }` 전달.
+- `POST /api/multimodal-query`: 이미지와 텍스트를 함께 분석. Multipart FormData로 사진과 쿼리 전송.
+- `GET /api/agents`: 시스템 내 로드된 스킬(Agent) 목록 및 능력 반환.
 
-서버가 실행되면 다음 주소로 접속할 수 있습니다:
-
-- **Frontend**: http://localhost:8000
-- **API Docs**: http://localhost:8000/docs
-- **ReDoc**: http://localhost:8000/redoc
-
-## 📁 프로젝트 구조 (Skills Branch)
-
-```
-safety_multiagent/
-├── skills/                 # 🆕 Skills 모듈 (핵심!)
-│   ├── base_skill.py      # BaseSkill 클래스
-│   ├── skill_manager.py   # SkillManager 클래스
-│   └── vision_analysis/   # Vision Analysis Skill
-│       ├── SKILL.md       # Skill 문서
-│       ├── skill.py       # 메인 구현
-│       ├── config.yaml    # 설정
-│       ├── prompts/       # 프롬프트 템플릿
-│       ├── examples/      # 사용 예시
-│       └── tests/         # 테스트 코드
-├── agents/                # 기존 에이전트 (레거시)
-│   ├── multimodal_agent.py
-│   ├── search_agent.py
-│   ├── analysis_agent.py
-│   ├── security_agent.py
-│   └── supervisor_agent.py
-├── auth/                  # 인증 관련 모듈
-│   ├── auth_handler.py
-│   ├── models.py
-│   └── routes.py
-├── config/                # 설정 파일
-│   └── settings.py
-├── data/                  # 데이터 저장소
-│   ├── vector_store/      # 벡터 DB
-│   ├── knowledge_base/    # 지식 베이스
-│   └── uploaded_images/
-├── documents/             # 🆕 Skills 아키텍처 문서
-│   ├── SKILLS_ARCHITECTURE_PLAN.md
-│   ├── SKILLS_EVENT_MAPPING.md
-│   ├── SKILLS_IMPLEMENTATION_GUIDE.md
-│   ├── SKILLS_COMPLETION_REPORT.md
-│   ├── SUPERVISOR_ROLE_COMPARISON.md
-│   └── SKILLS_AUTONOMY_EXPLANATION.md
-├── frontend/              # 프론트엔드 파일
-│   ├── index.html
-│   └── auth.js
-├── tools/                 # 도구 모듈 (레거시)
-├── utils/                 # 유틸리티 함수
-├── app.py                 # 메인 애플리케이션
-└── requirements.txt       # 의존성 목록
-```
-
-## 🚀 Skills 사용 예시
-
-### 1. Skill Manager 사용
-
-```python
-from skills.skill_manager import SkillManager
-
-# Skill Manager 초기화
-manager = SkillManager()
-
-# 사용 가능한 Skills 확인
-print(manager.list_skills())
-# ['vision_analysis']
-
-# Vision Analysis Skill 가져오기
-vision_skill = manager.get_skill('vision_analysis')
-print(vision_skill.metadata.name)
-print(vision_skill.get_capabilities())
-```
-
-### 2. PPE 감지
-
-```python
-# PPE 감지 실행
-result = vision_skill.execute('detect_ppe', {
-    'image': 'uploaded_images/worker.jpg',
-    'camera_id': 'cam_01'
-})
-
-print(f"위반 사항: {result['violations']}")
-print(f"위험도: {result['risk_level']}")
-print(f"권고사항: {result['recommendations']}")
-```
-
-### 3. 작업장 안전 평가
-
-```python
-# 안전 평가 실행
-result = vision_skill.execute('assess_safety', {
-    'image': 'uploaded_images/workplace.jpg',
-    'context': '건설 현장 A동'
-})
-
-print(f"전반적인 안전도: {result.get('overall_safety')}")
-print(f"발견된 위험 요소: {result.get('hazards')}")
-```
-
-### 4. Skill Manager를 통한 직접 실행
-
-```python
-# Skill Manager를 통해 직접 실행
-result = manager.execute_skill(
-    skill_name='vision_analysis',
-    task='detect_ppe',
-    context={'image': 'worker.jpg'}
-)
-
-if result['success']:
-    print(f"결과: {result['result']}")
-```
-
-### 1. 사용자 등록
-
-```bash
-curl -X POST "http://localhost:8000/auth/register" \
-  -H "Content-Type: application/json" \
-  -d '{"username": "user", "email": "user@example.com", "password": "password123"}'
-```
-
-### 2. 로그인
-
-```bash
-curl -X POST "http://localhost:8000/auth/login" \
-  -H "Content-Type: application/json" \
-  -d '{"username": "user", "password": "password123"}'
-```
-
-### 3. 멀티모달 분석
-
-```bash
-curl -X POST "http://localhost:8000/multimodal/analyze" \
-  -H "Authorization: Bearer <your-token>" \
-  -F "file=@image.jpg" \
-  -F "query=이 이미지에서 안전 문제를 찾아주세요"
-```
+*(모든 `/api/*` 주소는 JWT 인증(`Bearer Token`)을 요구합니다.)*
