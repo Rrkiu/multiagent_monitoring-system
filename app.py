@@ -15,6 +15,7 @@ from typing import List
 
 from agents.supervisor_langgraph import SupervisorLangGraph  # LangGraph 기반
 from agents.security_agent import SecurityAgent
+from utils.session_manager import get_session_manager   # [M2] TTL 세션 관리
 from config import settings
 
 # 인증 시스템 import
@@ -50,11 +51,11 @@ security_agent = None
 
 
 def get_supervisor() -> SupervisorLangGraph:
-    """SupervisorLangGraph 싱글톤 반환"""
+    """SupervisorLangGraph 싱글톤 반환 (SqliteSaver 포함)"""
     global supervisor
     if supervisor is None:
         print("SupervisorLangGraph 초기화 중...")
-        supervisor = SupervisorLangGraph(use_memory=True)
+        supervisor = SupervisorLangGraph(use_memory=True, use_sqlite=True)
         print("SupervisorLangGraph 초기화 완료!")
     return supervisor
 
@@ -138,13 +139,18 @@ async def process_query(
     Returns:
         QueryResponse (response, session_id)
     """
+    try:
         # Supervisor Agent 가져오기 (security_node가 내부에서 보안 검사 수행)
         agent = get_supervisor()
 
-        # 쿼리 처리 (session_id로 대화 이력 연결)
+        # [M2] SessionManager로 thread_id 획득 (TTL 관리)
+        user_id = request.session_id or current_user.username
+        thread_id = get_session_manager().get_thread_id(user_id)
+
+        # 쿼리 처리 (대화 이력 연결)
         response = agent.execute(
             user_input=request.query,
-            session_id=request.session_id,
+            session_id=thread_id,
         )
 
         # 응답이 비어있거나 None인 경우 처리
@@ -153,7 +159,7 @@ async def process_query(
 
         return QueryResponse(
             response=response,
-            session_id=request.session_id
+            session_id=thread_id   # 실제 사용된 thread_id를 프론트엔드에 반환
         )
 
     except StopIteration:
@@ -190,9 +196,14 @@ async def process_multimodal_query(
     Returns:
         QueryResponse (response, session_id)
     """
+    try:
         # Supervisor Agent 가져오기 (security_node가 내부에서 보안 검사 수행)
         agent = get_supervisor()
-        
+
+        # [M2] SessionManager로 thread_id 획득 (TTL 관리)
+        user_id = request.session_id or current_user.username
+        thread_id = get_session_manager().get_thread_id(user_id)
+
         # 이미지가 있는 경우 image_data와 함께 실행
         if request.images and len(request.images) > 0:
             print(f"\n[멀티모달 쿼리] 이미지 개수: {len(request.images)}")
@@ -200,27 +211,27 @@ async def process_multimodal_query(
             response = agent.execute(
                 user_input=request.query,
                 image_data=image_data,
-                session_id=request.session_id,
+                session_id=thread_id,
             )
         else:
             response = agent.execute(
                 user_input=request.query,
-                session_id=request.session_id,
+                session_id=thread_id,
             )
-        
+
         # 응답이 비어있거나 None인 경우 처리
         if not response or response.strip() == "":
             response = "죄송합니다. 응답을 생성할 수 없습니다. 다시 시도해주세요."
-        
+
         return QueryResponse(
             response=response,
-            session_id=request.session_id
+            session_id=thread_id
         )
-    
+
     except Exception as e:
         import traceback
         traceback.print_exc()
-        
+
         error_message = str(e)
         return QueryResponse(
             response=f"멀티모달 쿼리 처리 중 오류가 발생했습니다: {error_message}",

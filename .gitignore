@@ -47,11 +47,7 @@ env/
 data/safety_auth.db
 
 # Data & Storage
-data/vector_store/
-data/uploaded_images/
-uploaded_images/
-data/knowledge_base/*.pdf
-data/knowledge_base/*.docx
+data/*
 
 # Documentation (local only)
 documents/old

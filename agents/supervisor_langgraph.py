@@ -1,19 +1,19 @@
 """
 agents/supervisor_langgraph.py
-LangGraph 기반 Supervisor — StateGraph로 전체 흐름 관리
+LangGraph 기반 Supervisor — M2 업그레이드
 
-기존 supervisor_v2.py (LangChain) 대비 변경점:
-- AgentState로 구조화된 상태 공유
-- SecurityAgent → security_node (그래프 첫 번째 노드)
-- quick_route/llm_route → router_node
-- _execute_skill → skill_executor_node
-- ResponseFormatter → synthesizer_node
-- 조건부 엣지로 보안 차단 / 멀티스텝 분기 처리
+M1 대비 M2 변경사항:
+- [M2-1] SqliteSaver Checkpointer → 재시작 후에도 대화 이력 영속
+- [M2-2] 메시지 윈도우 → router_node에서 최근 10개 메시지만 유지
+- [M2-3] 에러 재시도 루프 → skill_executor 실패 시 router로 재라우팅 (최대 3회)
+- [M2-4] 병렬 스킬 실행 → multi_step에서 Send API로 독립 스킬 동시 실행
 """
 
 from langgraph.graph import StateGraph, END
+from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.checkpoint.memory import MemorySaver
-from langchain_core.messages import HumanMessage, AIMessage
+from langgraph.types import Send
+from langchain_core.messages import HumanMessage, AIMessage, trim_messages
 
 from agents.state import AgentState
 from agents.security_agent import SecurityAgent
@@ -23,9 +23,18 @@ from config import settings
 
 import json
 import re
-from typing import Optional, Literal
+import os
+from typing import Optional, Literal, List
 
 from langchain_google_genai import ChatGoogleGenerativeAI
+
+
+# ────────────────────────────────────────────────────────────
+# 상수
+# ────────────────────────────────────────────────────────────
+MAX_RETRY = 3          # 스킬 실행 최대 재시도 횟수
+MESSAGE_WINDOW = 10    # 대화 이력 유지 메시지 수
+DB_PATH = "./data/agent_memory.db"
 
 
 # ────────────────────────────────────────────────────────────
@@ -62,10 +71,7 @@ def _get_llm():
 
 
 # ────────────────────────────────────────────────────────────
-# 노드 1: security_node
-#   - 기존 app.py 레벨 SecurityAgent 검사를 그래프 안으로 편입
-#   - 차단되면 final_answer에 메시지를 담고 error를 설정
-#   - 이후 check_security_passed() 조건 함수가 END로 직행시킴
+# 노드 1: security_node (M1과 동일)
 # ────────────────────────────────────────────────────────────
 def security_node(state: AgentState) -> dict:
     print("\n[security_node] 보안 검사 시작")
@@ -81,23 +87,18 @@ def security_node(state: AgentState) -> dict:
         }
 
     print("[security_node] ✅ 통과")
-    return {}  # 변경 없음 — 다음 노드로 그대로 전달
+    return {}
 
 
 def check_security_passed(state: AgentState) -> Literal["pass", "block"]:
-    """security_node 이후 조건 함수: 오류 있으면 즉시 종료"""
     if state.get("error"):
         return "block"
     return "pass"
 
 
 # ────────────────────────────────────────────────────────────
-# 노드 2: router_node
-#   - 기존 quick_route() + llm_route() 로직을 그대로 이식
-#   - State에 routing_plan 저장
+# 라우팅 테이블 (M1과 동일)
 # ────────────────────────────────────────────────────────────
-
-# 키워드 기반 빠른 라우팅 매핑 (LLM 호출 없음)
 _KEYWORD_MAP = {
     "data_analytics": ["통계", "분석", "추세", "위험도", "비교", "계산", "증감", "변화", "평가"],
     "report_generation": ["보고서", "조치", "방안", "대응", "작성", "생성", "요약", "정리"],
@@ -106,7 +107,7 @@ _KEYWORD_MAP = {
 }
 
 _DEFAULT_TASK_MAP = {
-    "data_analytics": "analyze_query",   # 자연어 쿼리 → LLM이 파라미터 추출
+    "data_analytics": "analyze_query",
     "report_generation": "generate_action_plan",
     "knowledge_management": "search_knowledge",
     "vision_analysis": "analyze_image",
@@ -118,7 +119,6 @@ _TASK_KEYWORD_MAP = {
         "위험도": "assess_risk",
         "많은": "find_top_cameras",
         "위험한": "assess_risk",
-        # 그 외 자연어 통계 요청은 analyze_query로 처리 (LLM이 날짜 추출)
     },
     "report_generation": {
         "조치": "generate_action_plan", "대응": "generate_action_plan", "방안": "generate_action_plan",
@@ -133,8 +133,28 @@ _TASK_KEYWORD_MAP = {
 }
 
 
+def _is_safety_domain(user_input: str) -> bool:
+    """
+    안전 도메인과 최소한의 연관성이 있는지 1차 필터.
+    False이면 _llm_route 호출 전 out_of_scope로 빠르게 처리.
+    """
+    domain_keywords = [
+        # 안전 이벤트
+        "안전", "사고", "위험", "이벤트", "발생", "낙상", "화재", "연기",
+        "PPE", "헬멧", "안전모", "안전조끼", "보호", "접근",
+        # 통계/분석
+        "통계", "분석", "추세", "비교", "증가", "감소", "현황",
+        # 법규/규정
+        "법규", "규정", "조항", "산업안전", "기준", "처벌", "벌금",
+        # 운영/시스템
+        "카메라", "CAM", "CCTV", "모니터링", "보고서", "조치", "대응",
+        # 범용 질문 (안전 맥락에서 허용)
+        "어떻게", "무엇", "언제", "알려", "설명", "도움",
+    ]
+    return any(kw in user_input for kw in domain_keywords)
+
+
 def _quick_route(user_input: str) -> Optional[str]:
-    """키워드 매칭으로 즉시 스킬 결정 (LLM 호출 없음)"""
     for skill, keywords in _KEYWORD_MAP.items():
         if any(kw in user_input for kw in keywords):
             return skill
@@ -142,23 +162,25 @@ def _quick_route(user_input: str) -> Optional[str]:
 
 
 def _llm_route(user_input: str) -> dict:
-    """LLM을 호출하여 라우팅 계획을 JSON으로 결정"""
-    prompt = f"""당신은 안전 모니터링 시스템의 작업 분배 관리자입니다.
+    prompt = f"""당신은 작업장 안전 모니터링 시스템의 작업 분배 관리자입니다.
+오직 작업장 안전, 산업안전, 사고 분석, 법규/규정에 관한 질문만 처리합니다.
 
 사용자 요청: {user_input}
 
 사용 가능한 Skills:
-1. data_analytics     - 통계/추세/위험도 분석
-2. report_generation  - 보고서/조치방안 작성
-3. knowledge_management - 안전 규정 검색 및 Q&A (RAG)
-4. vision_analysis    - 이미지 안전 위반 감지
+1. data_analytics       - 통계/추세/위험도 분석
+2. report_generation    - 보고서/조치방안 작성
+3. knowledge_management - 안전 규정 검색 및 Q&A
+4. vision_analysis      - 이미지 안전 위반 감지
+5. out_of_scope         - 안전 도메인과 무관한 요청 (날씨, 일상, 엔터테인먼트 등)
 
-복잡한 요청은 여러 Skills를 순차 사용:
-- 예: "위험 구역 대응 방안" → data_analytics → report_generation
+규칙:
+- 안전/사고/법규/모니터링과 관련 없으면 반드시 out_of_scope를 선택하세요.
+- 억지로 안전 스킬에 매핑하지 마세요.
 
-응답 형식 (JSON만):
+응답 형식 (JSON만, 마크다운 없이):
 단일: {{"skill": "data_analytics", "task": "구체적 작업", "multi_step": false, "reason": "이유"}}
-멀티: {{"multi_step": true, "steps": [{{"skill": "data_analytics", "task": "작업1"}}, {{"skill": "report_generation", "task": "작업2"}}], "reason": "이유"}}"""
+아웃: {{"skill": "out_of_scope", "task": "", "multi_step": false, "reason": "도메인 외 요청"}}"""  # noqa
 
     try:
         response = _get_llm().invoke(prompt)
@@ -169,12 +191,10 @@ def _llm_route(user_input: str) -> dict:
     except Exception as e:
         print(f"[router_node] LLM 라우팅 오류: {e}")
 
-    # 기본값
     return {"skill": "knowledge_management", "task": user_input, "multi_step": False, "reason": "파싱 실패, 기본값"}
 
 
 def _determine_task(user_input: str, skill_name: str) -> str:
-    """스킬별 세부 task 이름 결정"""
     km = _TASK_KEYWORD_MAP.get(skill_name, {})
     for kw, task_name in km.items():
         if kw in user_input:
@@ -182,9 +202,46 @@ def _determine_task(user_input: str, skill_name: str) -> str:
     return _DEFAULT_TASK_MAP.get(skill_name, "execute")
 
 
+# ────────────────────────────────────────────────────────────
+# 노드 2: router_node
+# [M2-2] 메시지 윈도우: 최근 MESSAGE_WINDOW개 메시지만 유지
+# [M2-3] 재시도 시 error/iteration_count 초기화하지 않음 (누적 관리)
+# ────────────────────────────────────────────────────────────
 def router_node(state: AgentState) -> dict:
     print("\n[router_node] 라우팅 시작")
     user_input = state["user_query"]
+
+    # ── [M2-2] 메시지 윈도우: 최근 N개 메시지만 유지 ──────────
+    current_messages = state.get("messages", [])
+    if len(current_messages) > MESSAGE_WINDOW:
+        trimmed = trim_messages(
+            current_messages,
+            strategy="last",
+            max_tokens=MESSAGE_WINDOW,
+            token_counter=len,         # 메시지 개수 기준 카운팅
+            allow_partial=False,
+        )
+        messages_update = trimmed
+        print(f"[router_node] 메시지 윈도우: {len(current_messages)} → {len(trimmed)}개")
+    else:
+        messages_update = current_messages
+    # ──────────────────────────────────────────────────────────
+
+    # ── 도메인 관련성 1차 필터 ─────────────────────────────────
+    if not _is_safety_domain(user_input):
+        print(f"[router_node] 도메인 외 질문 감지 (1차 필터) → out_of_scope")
+        oos_answer = (
+            "죄송합니다. 저는 작업장 안전 모니터링 전용 시스템입니다.\n"
+            "안전 이벤트 분석, 법규 안내, 보고서 작성, 이미지 분석 등\n"
+            "안전 관련 질문에만 답변드릴 수 있습니다."
+        )
+        return {
+            "routing_plan": {"skill": "out_of_scope", "multi_step": False},
+            "final_answer": oos_answer,
+            "messages": messages_update + [AIMessage(content=oos_answer)],
+            "error": None,
+        }
+    # ──────────────────────────────────────────────────────────
 
     # 1단계: 빠른 키워드 라우팅
     skill_name = _quick_route(user_input)
@@ -200,50 +257,61 @@ def router_node(state: AgentState) -> dict:
         # 2단계: LLM 라우팅
         print("[router_node] LLM 라우팅 시작")
         plan = _llm_route(user_input)
-        print(f"[router_node] LLM 라우팅 결과: {json.dumps(plan, ensure_ascii=False)}")
+        print(f"[router_node] LLM 결과: {json.dumps(plan, ensure_ascii=False)}")
+
+        # LLM이 out_of_scope로 판단한 경우
+        if plan.get("skill") == "out_of_scope":
+            print("[router_node] LLM → out_of_scope")
+            oos_answer = (
+                "죄송합니다. 저는 작업장 안전 모니터링 전용 시스템입니다.\n"
+                "안전 이벤트 분석, 법규 안내, 보고서 작성, 이미지 분석 등\n"
+                "안전 관련 질문에만 답변드릴 수 있습니다."
+            )
+            return {
+                "routing_plan": plan,
+                "final_answer": oos_answer,
+                "messages": messages_update + [AIMessage(content=oos_answer)],
+                "error": None,
+            }
 
     return {
         "routing_plan": plan,
-        "iteration_count": 0,
-        "error": None,
-        "messages": [HumanMessage(content=user_input)],
+        "messages": messages_update,   # 윈도우 적용된 메시지로 교체
+        "error": None,                 # 재시도 시 이전 error 초기화
     }
 
 
-def check_routing(state: AgentState) -> Literal["multi_step", "single"]:
-    """router_node 이후 조건 함수: 멀티스텝 여부로 분기"""
-    if state["routing_plan"].get("multi_step"):
+def check_routing(state: AgentState) -> Literal["multi_step", "single", "out_of_scope"]:
+    plan = state.get("routing_plan", {})
+    if plan.get("skill") == "out_of_scope":
+        return "out_of_scope"
+    if plan.get("multi_step"):
         return "multi_step"
     return "single"
 
 
 # ────────────────────────────────────────────────────────────
-# 노드 3: skill_executor_node  (단일 스텝용)
-#   - routing_plan의 skill/task를 SkillManager로 실행
-#   - raw dict 결과를 skill_results에 누적 저장
+# 노드 3: skill_executor_node
+# [M2-3] 실패 시 iteration_count 증가 (조건부 엣지가 retry/fail 분기)
 # ────────────────────────────────────────────────────────────
 def skill_executor_node(state: AgentState) -> dict:
     plan = state["routing_plan"]
     skill_name = plan.get("skill", "knowledge_management")
     user_input = state["user_query"]
-
-    # task 이름 결정 (LLM 라우팅이 task를 줬으면 그것 우선, 없으면 키워드 매핑)
     task = _determine_task(user_input, skill_name)
 
-    print(f"\n[skill_executor_node] {skill_name} → task: {task}")
+    print(f"\n[skill_executor_node] {skill_name} → task: {task} "
+          f"(시도 {state.get('iteration_count', 0) + 1}/{MAX_RETRY})")
 
-    # context 구성 — 이전 스텝 결과를 구조화된 형태로 전달
     context = {
         "query": user_input,
         "task_description": plan.get("task", user_input),
         "previous_results": state.get("skill_results", {}),
     }
 
-    # 이미지 데이터 추가 (vision_analysis용)
     if state.get("image_data"):
         context["images"] = state["image_data"].get("images", [])
 
-    # report_generation 필수 context 보완
     if skill_name == "report_generation":
         if task == "generate_action_plan":
             context["event_data"] = {
@@ -268,10 +336,9 @@ def skill_executor_node(state: AgentState) -> dict:
             "skill_results": {skill_name: result},
             "current_skill": skill_name,
             "error": None,
+            # 성공 시 iteration_count는 유지 (이미 시도한 횟수 보존)
         }
     except Exception as e:
-        import traceback
-        traceback.print_exc()
         print(f"[skill_executor_node] ❌ 오류: {e}")
         return {
             "error": str(e),
@@ -280,78 +347,110 @@ def skill_executor_node(state: AgentState) -> dict:
         }
 
 
+def check_after_skill(state: AgentState) -> Literal["retry", "synthesize", "fail"]:
+    """
+    [M2-3] skill_executor 이후 분기:
+    - error 없음 → synthesize (정상 종료)
+    - error 있고 재시도 횟수 미달 → retry (router로 재라우팅)
+    - error 있고 재시도 횟수 초과 → fail (에러 응답 생성)
+    """
+    if not state.get("error"):
+        return "synthesize"
+    if state.get("iteration_count", 0) < MAX_RETRY:
+        print(f"[check_after_skill] 재시도 {state['iteration_count']}/{MAX_RETRY}")
+        return "retry"
+    print(f"[check_after_skill] 최대 재시도 초과 → fail")
+    return "fail"
+
+
 # ────────────────────────────────────────────────────────────
-# 노드 3b: multi_step_executor_node  (멀티스텝용)
-#   - routing_plan.steps를 순서대로 실행
-#   - 각 스텝 raw 결과를 skill_results에 누적
-#   - 이전 스텝 결과를 context["previous_results"]로 구조화 전달
+# 노드 3b: parallel_skill_node  (병렬 실행용 단일 워커)
+# [M2-4] Send API가 이 노드를 스킬 수만큼 병렬 호출
 # ────────────────────────────────────────────────────────────
-def multi_step_executor_node(state: AgentState) -> dict:
-    plan = state["routing_plan"]
-    steps = plan.get("steps", [])
+def parallel_skill_node(state: AgentState) -> dict:
+    """
+    Send API로 개별 호출되는 병렬 스킬 실행 노드.
+    state에 _current_step 필드(라우터가 Send로 주입)가 있어야 한다.
+    """
+    step = state.get("_current_step", {})
+    skill_name = step.get("skill", "knowledge_management")
     user_input = state["user_query"]
+    task = _determine_task(user_input, skill_name)
 
-    print(f"\n[multi_step_executor_node] {len(steps)}개 스텝 실행")
+    print(f"\n[parallel_skill_node] 병렬 실행: {skill_name} → {task}")
 
-    accumulated_results: dict = {}
-
-    for i, step in enumerate(steps, 1):
-        skill_name = step.get("skill", "knowledge_management")
-        task = _determine_task(user_input, skill_name)
-
-        print(f"  [Step {i}/{len(steps)}] {skill_name} → {task}")
-
-        context = {
-            "query": user_input,
-            "task_description": step.get("task", user_input),
-            # 이전 스텝의 raw dict 결과를 그대로 전달 (문자열 concat 아님)
-            "previous_results": accumulated_results,
-        }
-
-        if state.get("image_data"):
-            context["images"] = state["image_data"].get("images", [])
-
-        if skill_name == "report_generation" and task == "generate_action_plan":
-            context["event_data"] = {
-                "event_type": _extract_event_type(user_input),
-                "description": user_input,
-                "severity": "MEDIUM",
-                "timestamp": "N/A",
-            }
-            # 이전 스텝 결과가 있으면 knowledge_context로 활용
-            if accumulated_results:
-                prev_summary = json.dumps(accumulated_results, ensure_ascii=False)[:500]
-                context["knowledge_context"] = prev_summary
-
-        try:
-            result = _get_skill_manager().execute_skill(
-                skill_name=skill_name,
-                task=task,
-                context=context,
-            )
-            accumulated_results[skill_name] = result
-            print(f"  [Step {i}] ✅ 완료")
-        except Exception as e:
-            print(f"  [Step {i}] ❌ 오류: {e}")
-            accumulated_results[skill_name] = {"error": str(e)}
-
-    # 마지막으로 실행된 스킬 이름
-    last_skill = steps[-1].get("skill") if steps else "knowledge_management"
-
-    return {
-        "skill_results": accumulated_results,
-        "current_skill": last_skill,
-        "error": None,
+    context = {
+        "query": user_input,
+        "task_description": step.get("task", user_input),
+        "previous_results": state.get("skill_results", {}),
     }
 
+    if state.get("image_data"):
+        context["images"] = state["image_data"].get("images", [])
+
+    if skill_name == "report_generation" and task == "generate_action_plan":
+        context["event_data"] = {
+            "event_type": _extract_event_type(user_input),
+            "description": user_input,
+            "severity": "MEDIUM",
+            "timestamp": "N/A",
+        }
+        if context["previous_results"]:
+            context["knowledge_context"] = json.dumps(
+                context["previous_results"], ensure_ascii=False
+            )[:500]
+
+    try:
+        result = _get_skill_manager().execute_skill(skill_name, task, context)
+        print(f"[parallel_skill_node] ✅ {skill_name} 완료")
+        return {
+            "skill_results": {skill_name: result},
+            "current_skill": skill_name,
+            "error": None,
+        }
+    except Exception as e:
+        print(f"[parallel_skill_node] ❌ {skill_name} 오류: {e}")
+        return {
+            "skill_results": {skill_name: {"error": str(e), "success": False}},
+            "current_skill": skill_name,
+        }
+
 
 # ────────────────────────────────────────────────────────────
-# 노드 4: synthesizer_node
-#   - skill_results의 마지막 결과를 ResponseFormatter로 자연어 변환
-#   - final_answer에 저장
+# [M2-4] Send API 라우터: 멀티스텝을 병렬로 분기
+# ────────────────────────────────────────────────────────────
+def route_parallel_skills(state: AgentState) -> List[Send]:
+    """
+    routing_plan.steps의 각 스텝에 대해 Send를 발행.
+    LangGraph는 이 함수가 반환한 Send 목록을 병렬로 실행한다.
+    """
+    steps = state["routing_plan"].get("steps", [])
+    print(f"\n[route_parallel_skills] {len(steps)}개 스킬 병렬 실행")
+    return [
+        Send("parallel_skill", {**state, "_current_step": step})
+        for step in steps
+    ]
+
+
+def parallel_dispatcher_node(state: AgentState) -> dict:
+    """
+    [M2-4] 멀티스텝 라우팅 시 route_parallel_skills로 Send를 분기하기 전
+    경유하는 identity 노드. 상태 변경 없이 그대로 통과.
+    """
+    steps = state["routing_plan"].get("steps", [])
+    print(f"\n[parallel_dispatcher] {len(steps)}개 스킬로 병렬 분기 준비")
+    return {}  # 상태 변경 없음
+
+
+# ────────────────────────────────────────────────────────────
+# 노드 5: synthesizer_node (M1과 동일, fail 경로 추가)
 # ────────────────────────────────────────────────────────────
 def synthesizer_node(state: AgentState) -> dict:
     print("\n[synthesizer_node] 응답 생성")
+
+    plan = state.get("routing_plan", {})
+    if plan.get("skill") == "out_of_scope":
+        return {}  # router_node에서 이미 final_answer와 messages를 채웠으므로 그대로 통과
 
     skill_results = state.get("skill_results", {})
     current_skill = state.get("current_skill", "")
@@ -360,19 +459,14 @@ def synthesizer_node(state: AgentState) -> dict:
     if not skill_results:
         return {"final_answer": "결과를 생성할 수 없습니다. 다시 시도해주세요."}
 
-    # 마지막 스킬의 raw 결과 추출
-    # SkillManager.execute_skill() 반환: {"success": bool, "skill": ..., "task": ..., "result": {...}}
     last_raw = skill_results.get(current_skill, {})
-    inner_result = last_raw.get("result", last_raw)  # result 키가 있으면 그 안, 없으면 전체
+    inner_result = last_raw.get("result", last_raw)
 
-    # 실패한 경우
     if not last_raw.get("success", True):
         error_msg = last_raw.get("error", "알 수 없는 오류")
         return {"final_answer": f"요청 처리 중 오류가 발생했습니다: {error_msg}"}
 
     formatter = get_formatter()
-    # routing_plan에서 task 이름 확인
-    plan = state.get("routing_plan", {})
     task_name = _determine_task(user_query, current_skill)
 
     formatted = formatter.format_response(
@@ -389,11 +483,26 @@ def synthesizer_node(state: AgentState) -> dict:
     }
 
 
+def error_node(state: AgentState) -> dict:
+    """[M2-3] 최대 재시도 초과 시 사용자 친화적 오류 응답"""
+    error = state.get("error", "알 수 없는 오류")
+    skill = state.get("current_skill", "")
+    count = state.get("iteration_count", MAX_RETRY)
+    print(f"\n[error_node] {count}회 실패 → 오류 응답 반환")
+    return {
+        "final_answer": (
+            f"요청을 처리하는 과정에서 문제가 발생했습니다.\n"
+            f"({skill} 스킬 {count}회 시도 실패)\n"
+            f"잠시 후 다시 시도하거나 질문 방식을 바꿔 주세요."
+        ),
+        "messages": [AIMessage(content=f"[오류] {error}")],
+    }
+
+
 # ────────────────────────────────────────────────────────────
 # 헬퍼
 # ────────────────────────────────────────────────────────────
 def _extract_event_type(user_input: str) -> str:
-    """사용자 입력에서 이벤트 타입 추출"""
     mapping = {
         "NO_HELMET": ["헬멧", "안전모"],
         "NO_SAFETY_VEST": ["조끼", "안전조끼"],
@@ -409,17 +518,25 @@ def _extract_event_type(user_input: str) -> str:
 
 
 # ────────────────────────────────────────────────────────────
-# 그래프 조립
+# 그래프 조립 — M2 버전
 # ────────────────────────────────────────────────────────────
-def build_graph(use_memory: bool = False):
+def build_graph(use_memory: bool = True, use_sqlite: bool = True):
     """
-    LangGraph StateGraph 조립 및 컴파일
+    M2 LangGraph StateGraph 조립 및 컴파일
 
     Args:
-        use_memory: True이면 MemorySaver로 세션별 대화 이력 유지
+        use_memory:  True이면 Checkpointer로 세션별 대화 이력 유지
+        use_sqlite:  True이면 SqliteSaver(영속), False이면 MemorySaver(인메모리)
 
     Returns:
         Compiled graph
+
+    그래프 구조:
+        security → router
+                 → skill_executor ──(성공)──→ synthesizer → END
+                                  ──(재시도)→ router
+                                  ──(실패)──→ error_node → END
+                 → [parallel_skill × N] → synthesizer → END
     """
     workflow = StateGraph(AgentState)
 
@@ -427,69 +544,90 @@ def build_graph(use_memory: bool = False):
     workflow.add_node("security", security_node)
     workflow.add_node("router", router_node)
     workflow.add_node("skill_executor", skill_executor_node)
-    workflow.add_node("multi_step_executor", multi_step_executor_node)
+    workflow.add_node("parallel_dispatcher", parallel_dispatcher_node)  # [M2-4]
+    workflow.add_node("parallel_skill", parallel_skill_node)            # [M2-4]
     workflow.add_node("synthesizer", synthesizer_node)
+    workflow.add_node("error", error_node)                              # [M2-3]
 
     # 진입점
     workflow.set_entry_point("security")
 
-    # 엣지 정의
-    # security → (pass) router / (block) END
+    # security → pass/block
     workflow.add_conditional_edges(
         "security",
         check_security_passed,
         {"pass": "router", "block": END},
     )
 
-    # router → (single) skill_executor / (multi_step) multi_step_executor
+    # router → single / multi_step / out_of_scope
     workflow.add_conditional_edges(
         "router",
         check_routing,
-        {"single": "skill_executor", "multi_step": "multi_step_executor"},
+        {
+            "single": "skill_executor",
+            "multi_step": "parallel_dispatcher",   # [M2-4] 병렬 분기 노드로
+            "out_of_scope": "synthesizer",         # final_answer 이미 설정 → 바로 합성
+        },
     )
 
-    # skill_executor → synthesizer (항상)
-    workflow.add_edge("skill_executor", "synthesizer")
+    # [M2-3] skill_executor → synthesize / retry(router) / fail(error)
+    workflow.add_conditional_edges(
+        "skill_executor",
+        check_after_skill,
+        {
+            "synthesize": "synthesizer",
+            "retry": "router",                     # ← 재라우팅
+            "fail": "error",
+        },
+    )
 
-    # multi_step_executor → synthesizer (항상)
-    workflow.add_edge("multi_step_executor", "synthesizer")
+    # [M2-4] parallel_dispatcher → Send API → parallel_skill × N → synthesizer
+    workflow.add_conditional_edges(
+        "parallel_dispatcher",
+        route_parallel_skills,   # List[Send] 반환
+    )
+    workflow.add_edge("parallel_skill", "synthesizer")
 
-    # synthesizer → END
+    # 종료
     workflow.add_edge("synthesizer", END)
+    workflow.add_edge("error", END)
 
-    # 컴파일
+    # Checkpointer 설정
     if use_memory:
-        memory = MemorySaver()
-        return workflow.compile(checkpointer=memory)
+        if use_sqlite:
+            import sqlite3
+            os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+            # LangGraph 1.x: from_conn_string()은 context manager 반환 → 직접 연결
+            conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+            checkpointer = SqliteSaver(conn)
+            print(f"[build_graph] SqliteSaver: {DB_PATH}")
+        else:
+            checkpointer = MemorySaver()
+            print("[build_graph] MemorySaver (인메모리)")
+        return workflow.compile(checkpointer=checkpointer)
 
     return workflow.compile()
 
 
 # ────────────────────────────────────────────────────────────
-# SupervisorLangGraph — app.py에서 기존 SupervisorAgentV2와
-# 동일한 인터페이스로 교체할 수 있는 래퍼 클래스
+# SupervisorLangGraph 래퍼 클래스
 # ────────────────────────────────────────────────────────────
 class SupervisorLangGraph:
     """
-    LangGraph 기반 Supervisor.
-    app.py에서 SupervisorAgentV2 드롭인 교체 가능:
+    M2 LangGraph 기반 Supervisor.
 
-        # 기존
-        from agents.supervisor_v2 import SupervisorAgentV2
-        supervisor = SupervisorAgentV2()
-        response = supervisor.execute(query)
-
-        # 신규
-        from agents.supervisor_langgraph import SupervisorLangGraph
-        supervisor = SupervisorLangGraph()
-        response = supervisor.execute(query)
+    주요 M2 기능:
+    - SqliteSaver: 재시작 후에도 대화 이력 유지 (thread_id 기준)
+    - 메시지 윈도우: 최근 10개 메시지만 라우터에 전달
+    - 에러 재시도: 스킬 실패 시 최대 3회 재라우팅
+    - 병렬 실행: 멀티스텝 요청 시 Send API로 동시 실행
     """
 
-    def __init__(self, use_memory: bool = True):
-        print("✅ SupervisorLangGraph 초기화 중...")
-        self.graph = build_graph(use_memory=use_memory)
+    def __init__(self, use_memory: bool = True, use_sqlite: bool = True):
+        print("✅ SupervisorLangGraph (M2) 초기화 중...")
+        self.graph = build_graph(use_memory=use_memory, use_sqlite=use_sqlite)
         self.use_memory = use_memory
-        print("✅ SupervisorLangGraph 초기화 완료")
+        print("✅ SupervisorLangGraph (M2) 초기화 완료")
 
     def execute(
         self,
@@ -503,13 +641,15 @@ class SupervisorLangGraph:
         Args:
             user_input:  사용자 질의
             image_data:  {"images": [base64, ...]} (멀티모달)
-            session_id:  세션 ID (메모리 사용 시 대화 이력 연결)
+            session_id:  thread_id (Checkpointer 키). SessionManager.get_thread_id()로 생성 권장.
 
         Returns:
             최종 응답 문자열
         """
         print(f"\n{'='*60}")
         print(f"[SupervisorLangGraph] 요청: {user_input}")
+        if session_id:
+            print(f"[SupervisorLangGraph] session_id: {session_id}")
         print(f"{'='*60}")
 
         initial_state: AgentState = {
@@ -544,20 +684,23 @@ class SupervisorLangGraph:
 # 단독 실행 테스트
 # ────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    supervisor = SupervisorLangGraph(use_memory=False)
+    # 메모리만 사용 (SQLite 없이 테스트)
+    supervisor = SupervisorLangGraph(use_memory=True, use_sqlite=False)
 
-    test_queries = [
+    SESSION = "test_user_001"
+
+    # 멀티턴 대화 테스트 (메시지 이력 누적 확인)
+    turns = [
         "안전모를 착용하지 않으면 어떻게 되나요?",
-        "최근 7일간 통계를 보여주세요",
-        "낙상 사고에 대한 조치 방안을 알려주세요",
+        "방금 말한 내용을 요약해줘",              # 이전 대화 참조 여부 확인
+        "최근 7일간 이벤트 통계를 보여주세요",
     ]
 
-    for i, query in enumerate(test_queries, 1):
+    for i, query in enumerate(turns, 1):
         print(f"\n\n{'#'*60}")
-        print(f"테스트 {i}: {query}")
+        print(f"Turn {i}: {query}")
         print(f"{'#'*60}")
-        response = supervisor.execute(query)
-        print(f"\n[최종 응답]\n{response}")
-        print(f"\n{'='*60}")
+        response = supervisor.execute(query, session_id=SESSION)
+        print(f"\n[응답]\n{response}")
 
-    print("\n✅ SupervisorLangGraph 테스트 완료")
+    print("\n✅ M2 SupervisorLangGraph 테스트 완료")
