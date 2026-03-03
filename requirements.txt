@@ -1,8 +1,9 @@
 # LLM 및 LangChain 핵심
-langchain==0.1.0
-langchain-google-genai==0.0.6
-langchain-community==0.0.13
-google-generativeai==0.3.2
+langchain==1.2.10
+langchain-core==1.2.17
+langchain-google-genai==4.2.1
+langchain-community==0.4.1
+langgraph==1.0.10
 
 # RAG 및 벡터 저장소
 chromadb==0.4.22

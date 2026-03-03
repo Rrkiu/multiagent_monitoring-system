@@ -7,7 +7,7 @@ from typing import Dict, Any, List, Optional
 from pathlib import Path
 
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.schema import Document
+from langchain_core.documents import Document
 from config import settings
 from skills.base_skill import BaseSkill, SkillMetadata
 from utils.rag_system import RAGSystem

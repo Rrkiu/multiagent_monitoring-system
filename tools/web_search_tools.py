@@ -3,7 +3,7 @@
 DuckDuckGo Rate Limit 문제 해결을 위한 개선된 구현
 """
 
-from langchain.tools import Tool
+from langchain_core.tools import Tool
 from typing import Optional, List, Dict
 import json
 import time

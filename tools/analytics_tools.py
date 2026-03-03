@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List
 from collections import Counter
 
-from langchain.tools import tool
+from langchain_core.tools import tool
 from tools.data_tools import load_events, parse_date
 
 

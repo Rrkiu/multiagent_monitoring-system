@@ -3,7 +3,7 @@ RAG 검색 도구
 지식 베이스에서 정보를 검색하는 도구들
 """
 
-from langchain.tools import tool
+from langchain_core.tools import tool
 from utils.rag_system import RAGSystem
 
 # RAG 시스템 전역 인스턴스
